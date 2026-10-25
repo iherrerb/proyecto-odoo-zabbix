@@ -1,0 +1,76 @@
+services:
+  # ---------- Servicio de negocio: Odoo CRM ----------
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: ${ODOO_DB_USER}
+      POSTGRES_PASSWORD: ${ODOO_DB_PASSWORD}
+    volumes: [odoo_db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ODOO_DB_USER}"]
+      interval: 10s
+      retries: 5
+    networks: [backend]
+  odoo:
+    build: ./odoo
+    image: proyecto/odoo-crm:1.0
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      HOST: db
+      USER: ${ODOO_DB_USER}
+      PASSWORD: ${ODOO_DB_PASSWORD}
+    ports: ["${ODOO_PORT}:8069"]
+    volumes: [odoo_data:/var/lib/odoo]
+    networks: [backend, frontend]
+  # ---------- Monitoreo: Zabbix ----------
+  zabbix-db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: ${ZBX_DB_USER}
+      POSTGRES_PASSWORD: ${ZBX_DB_PASSWORD}
+    volumes: [zbx_db:/var/lib/postgresql/data]
+    networks: [monitoring]
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:alpine-7.0-latest
+    restart: unless-stopped
+    depends_on: [zabbix-db]
+    environment:
+      DB_SERVER_HOST: zabbix-db
+      POSTGRES_USER: ${ZBX_DB_USER}
+      POSTGRES_PASSWORD: ${ZBX_DB_PASSWORD}
+      POSTGRES_DB: zabbix
+    networks: [monitoring, backend]
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0-latest
+    restart: unless-stopped
+    depends_on: [zabbix-server]
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      DB_SERVER_HOST: zabbix-db
+      POSTGRES_USER: ${ZBX_DB_USER}
+      POSTGRES_PASSWORD: ${ZBX_DB_PASSWORD}
+      POSTGRES_DB: zabbix
+      PHP_TZ: America/Bogota
+    ports: ["${ZBX_WEB_PORT}:8080"]
+    networks: [monitoring, frontend]
+  zabbix-agent:
+    image: zabbix/zabbix-agent2:alpine-7.0-latest
+    restart: unless-stopped
+    user: root
+    privileged: true
+    environment:
+      ZBX_HOSTNAME: odoo-vm
+      ZBX_SERVER_HOST: zabbix-server
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+    networks: [monitoring, backend]
+volumes: { odoo_db: {}, odoo_data: {}, zbx_db: {} }
+networks: { backend: {}, frontend: {}, monitoring: {} }
